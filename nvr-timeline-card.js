@@ -8,6 +8,7 @@ class NvrTimelineCard extends HTMLElement {
     this._periodHours = 2;
     this._history = {};
     this._loading = false;
+    this._rendered = false;
   }
 
   setConfig(config) {
@@ -63,7 +64,7 @@ class NvrTimelineCard extends HTMLElement {
   async _loadHistory(from, to) {
     const cfg = this._config;
     const haUrl = (cfg.ha_url || '').replace(/\/$/, '');
-    const token = cfg.ha_token || (this._hass && this._hass.auth && this._hass.auth.data && this._hass.auth.data.access_token) || '';
+    const token = cfg.ha_token || '';
     const ids = cfg.entities.map(e => e.entity).join(',');
     const url = `${haUrl}/api/history/period/${from.toISOString()}?filter_entity_id=${ids}&end_time=${to.toISOString()}&minimal_response=true&no_attributes=true`;
     try {
@@ -81,7 +82,7 @@ class NvrTimelineCard extends HTMLElement {
       const t = new Date(s.last_changed || (s.lu * 1000));
       if (s.state === 'on') {
         onTime = t < from ? from : t;
-      } else if ((s.state === 'off') && onTime) {
+      } else if (s.state === 'off' && onTime) {
         segs.push({ start: onTime, end: t });
         onTime = null;
       }
@@ -113,9 +114,8 @@ class NvrTimelineCard extends HTMLElement {
     const to = new Date(toMs);
     const data = await this._loadHistory(from, to);
     if (data) {
-      const cfg = this._config;
       this._history = {};
-      cfg.entities.forEach((ent, i) => {
+      this._config.entities.forEach((ent, i) => {
         this._history[ent.entity] = data[i] || [];
       });
     }
@@ -123,11 +123,27 @@ class NvrTimelineCard extends HTMLElement {
     this._renderChart();
   }
 
-  _writeOutput(url) {
-    if (!this._config.output_entity || !this._hass) return;
-    this._hass.callService('input_text', 'set_value', {
-      entity_id: this._config.output_entity,
-      value: url,
+  _writeOutput(url, isLive) {
+    if (!this._hass) return;
+
+    if (this._config.output_entity) {
+      this._hass.callService('input_text', 'set_value', {
+        entity_id: this._config.output_entity,
+        value: url,
+      });
+    }
+
+    this._hass.callService('browser_mod', 'popup', {
+      title: isLive ? '🔴 Live' : '📼 Архив',
+      size: 'wide',
+      content: {
+        type: 'custom:webrtc-camera',
+        url: url,
+        muted: true,
+        ui: false,
+      },
+      dismissable: true,
+      autoclose: false,
     });
   }
 
@@ -151,7 +167,7 @@ class NvrTimelineCard extends HTMLElement {
   .seg:hover { opacity: 0.7; }
   .axis { display: flex; margin-left: 44px; justify-content: space-between; margin-top: 2px; }
   .axis span { font-size: 10px; color: #444; }
-  .status { font-size: 10px; color: #444; text-align: right; margin-top: 4px; }
+  .status { font-size: 10px; color: #555; text-align: right; margin-top: 4px; min-height: 14px; }
 </style>
 <div class="controls">
   <button class="btn" id="prev">‹</button>
@@ -195,7 +211,7 @@ class NvrTimelineCard extends HTMLElement {
     const axis = s.getElementById('axis');
     const status = s.getElementById('status');
     const rangeLabel = s.getElementById('range_label');
-    const h = cfg.row_height || 9;
+    const rowH = cfg.row_height || 9;
     const minW = cfg.min_segment_width || 12;
 
     const toMs = Date.now() + this._offsetMs;
@@ -224,7 +240,7 @@ class NvrTimelineCard extends HTMLElement {
 
       const track = document.createElement('div');
       track.className = 'track';
-      track.style.height = `${h + 4}px`;
+      track.style.height = `${rowH + 4}px`;
 
       avail.forEach(av => {
         const left = Math.max((av.start - from) / totalMs * 100, 0);
@@ -236,30 +252,32 @@ class NvrTimelineCard extends HTMLElement {
       });
 
       segs.forEach(seg => {
-        const leftPx = (seg.start - from) / totalMs;
-        const widthPx = (seg.end - seg.start) / totalMs;
+        const leftPct = (seg.start - from) / totalMs * 100;
         const trackW = track.getBoundingClientRect().width || 300;
-        const leftPct = leftPx * 100;
-        const widthPct = Math.max(widthPx * 100, minW / trackW * 100);
+        const widthPct = Math.max((seg.end - seg.start) / totalMs * 100, minW / trackW * 100);
 
         const el = document.createElement('div');
         el.className = 'seg';
         el.style.cssText = `left:${leftPct}%; width:${widthPct}%; background:${ent.color || '#2196F3'}; top:2px; bottom:2px;`;
 
         let tapTimer = null;
+
         el.addEventListener('click', () => {
           if (!ent.tap_action) return;
+
           if (tapTimer) {
+            // Двойной тап — live
             clearTimeout(tapTimer);
             tapTimer = null;
             const liveUrl = this._buildUrl(cfg.live_url_template, ent.track, seg.start, seg.end);
-            this._writeOutput(liveUrl);
+            this._writeOutput(liveUrl, true);
             status.textContent = `Live: ${ent.label || ent.entity}`;
           } else {
+            // Одиночный тап — ждём 300мс
             tapTimer = setTimeout(() => {
               tapTimer = null;
               const archiveUrl = this._buildUrl(cfg.archive_url_template, ent.track, seg.start, seg.end);
-              this._writeOutput(archiveUrl);
+              this._writeOutput(archiveUrl, false);
               status.textContent = `Архив: ${this._fmtFull(seg.start)} → ${this._fmtFull(seg.end)}`;
             }, 300);
           }
@@ -273,7 +291,7 @@ class NvrTimelineCard extends HTMLElement {
     });
 
     axis.innerHTML = '';
-    const steps = this._periodHours <= 2 ? 6 : this._periodHours <= 6 ? 8 : 8;
+    const steps = this._periodHours <= 2 ? 6 : 8;
     for (let i = 0; i <= steps; i++) {
       const t = new Date(fromMs + (totalMs / steps) * i);
       const span = document.createElement('span');
