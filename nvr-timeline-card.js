@@ -263,22 +263,26 @@ class NvrTimelineCard extends HTMLElement {
         el.style.cssText = `left:${leftPct}%; width:${widthPct}%; background:${ent.color || '#2196F3'}; top:2px; bottom:2px;`;
 
         let tapTimer = null;
-
-        el.addEventListener('click', () => {
+        
+        el.addEventListener('click', (e) => {
+          e.stopPropagation();
+          console.log('click on seg', ent.entity, ent.tap_action, seg.start, seg.end);
           if (!ent.tap_action) return;
-
+        
           if (tapTimer) {
-            // Двойной тап — live
             clearTimeout(tapTimer);
             tapTimer = null;
+            console.log('double tap - live');
             const liveUrl = this._buildUrl(cfg.live_url_template, ent.track, seg.start, seg.end);
+            console.log('liveUrl', liveUrl);
             this._writeOutput(liveUrl, true);
             status.textContent = `Live: ${ent.label || ent.entity}`;
           } else {
-            // Одиночный тап — ждём 300мс
             tapTimer = setTimeout(() => {
               tapTimer = null;
+              console.log('single tap - archive');
               const archiveUrl = this._buildUrl(cfg.archive_url_template, ent.track, seg.start, seg.end);
+              console.log('archiveUrl', archiveUrl);
               this._writeOutput(archiveUrl, false);
               status.textContent = `Архив: ${this._fmtFull(seg.start)} → ${this._fmtFull(seg.end)}`;
             }, 300);
