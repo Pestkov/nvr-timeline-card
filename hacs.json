@@ -1,0 +1,6 @@
+{
+  "name": "NVR Timeline Card",
+  "description": "Interactive timeline card for NVR cameras with RTSP playback",
+  "render_readme": true,
+  "domains": ["lovelace"]
+}
