@@ -124,16 +124,18 @@ class NvrTimelineCard extends HTMLElement {
   }
 
   _writeOutput(url, isLive) {
-    if (!this._hass) return;
-
+    // Берём hass из глобального объекта HA
+    const hass = this._hass || document.querySelector('home-assistant').hass;
+    if (!hass) return;
+  
     if (this._config.output_entity) {
-      this._hass.callService('input_text', 'set_value', {
+      hass.callService('input_text', 'set_value', {
         entity_id: this._config.output_entity,
         value: url,
       });
     }
-
-    this._hass.callService('browser_mod', 'popup', {
+  
+    hass.callService('browser_mod', 'popup', {
       title: isLive ? '🔴 Live' : '📼 Архив',
       size: 'wide',
       content: {
